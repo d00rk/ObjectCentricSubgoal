@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 
 from dataset.libero_dataset import LiberoDataset
-from policy.slot_autoencoder import SlotAttentionAutoEncoder
+from model.slot_autoencoder import SlotAttentionAutoEncoder
 from utils.common import save_recon_grid, save_ckpt, set_seed, get_scheduler
 
 
