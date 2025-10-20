@@ -1,9 +1,11 @@
-from typing import List, Dict, Tuple
+from typing import Union, List, Dict, Tuple
 import os, glob
 from pathlib import Path
 import h5py
 import json
 from PIL import Image, ImageOps
+import tqdm
+import copy
 import random
 import numpy as np
 import torch
@@ -18,36 +20,37 @@ class LiberoImageDataset(Dataset):
     Single-view frame dataset for Libero demos.
     
     Return: {current_image, file, demo, current_step, instruction}
-    - current_image: float tensor in [0, 1]. shape: (C, H, W)
+    - current_image: (C, H, W)
     """
     def __init__(self,
-                 dataset_path: str,
+                 dataset_path: Union[str, List[str]],
                  view: str='agentview_rgb',
-                 resize: Tuple[int,int]=(128, 128),
-                 mode: str='train',
+                #  mode: str='train',
                  val_ratio: float=0.1,
                  seed: int=42,
                  ):
         super().__init__()
         set_seed(seed)
         
-        assert mode in ['train', 'val'], f'Mode should be "train" or "val", not {mode}.'
-        self.mode = mode
+        # assert mode in ['train', 'val'], f'Mode should be "train" or "val", not {mode}.'
+        # self.mode = mode
         
         if dataset_path is None:
             dataset_path = get_libero_path('dataset')
         
         self.dataset_path = dataset_path
         self.view = view
-        self.resize = resize
         self.val_ratio = val_ratio
 
         self._preload_data()
         
     def _preload_data(self):
-        dataset_files = [str(path) for path in Path(self.dataset_path).rglob('*.hdf5')]
+        if isinstance(self.dataset_path, List):
+            dataset_files = [str(path) for dpath in self.dataset_path for path in Path(dpath).rglob('*.hdf5')]
+        else:
+            dataset_files = [str(path) for path in Path(self.dataset_path).rglob('*.hdf5')]
         index = []
-        for file in dataset_files:
+        for file in tqdm.tqdm(dataset_files, desc=f'Preloading dataset', leave=False):
             f = h5py.File(file, 'r')
             data = f['data']
             problem_info = json.loads(data.attrs['problem_info'])
@@ -65,9 +68,16 @@ class LiberoImageDataset(Dataset):
         n_val = int(len(index) * self.val_ratio)
         n_train = int(len(index) - n_val)
         assert n_train + n_val == len(index)
-        chosen = index[:n_train] if self.mode == 'train' else index[n_train:]
-        self.index = chosen
+        train_chosen = index[:n_train]
+        val_chosen = index[n_train:]
+        self.index = train_chosen
+        self._val_index = val_chosen
     
+    def get_val_dataset(self):
+        dataset = copy.deepcopy(self)
+        dataset.index = self._val_index
+        return dataset
+        
     def __len__(self):
         return len(self.index)
     
@@ -85,8 +95,7 @@ class LiberoImageDataset(Dataset):
         img = self._read_image(file, demo_key, t)               # (H, W, C)
         img = Image.fromarray(img)
         img = ImageOps.flip(img)
-        img = img.resize(self.resize, Image.BILINEAR)
-        img = np.array(img).astype(np.float32) / 255.0
+        img = np.array(img)
         img = torch.from_numpy(img)
         img = img.permute(2, 0, 1).contiguous()                 # (C, H, W)
         file.close()
@@ -114,15 +123,11 @@ class LiberoSubgoalImageDataset(Dataset):
                  dataset_path: str,
                  view: str='agentview_rgb',
                  resize: Tuple[int, int]=(128, 128),
-                 mode: str='train',
                  val_ratio: float=0.05,
                  seed: int=42,
                  ):
         super().__init__()
         set_seed(seed)
-        
-        assert mode in ['train', 'val'], f'Mode should be "train" or "val", not {mode}.'
-        self.mode = mode
         
         if dataset_path is None:
             dataset_path = get_libero_path('dataset')
@@ -135,9 +140,12 @@ class LiberoSubgoalImageDataset(Dataset):
         self._preload_data()
     
     def _preload_data(self):
-        dataset_files = [str(path) for path in Path(self.dataset_path).rglob('*.hdf5')]
+        if isinstance(self.dataset_path, List):
+            dataset_files = [str(path) for dpath in self.dataset_path for path in Path(dpath).rglob('*.hdf5')]
+        else:
+            dataset_files = [str(path) for path in Path(self.dataset_path).rglob('*.hdf5')]
         index = []
-        for file in dataset_files:
+        for file in tqdm.tqdm(dataset_files, desc=f'Preloading dataset', leave=False):
             try:
                 with h5py.File(file, 'r') as f:
                     data = f['data']
@@ -165,9 +173,16 @@ class LiberoSubgoalImageDataset(Dataset):
         n_train = int(len(index) - n_val)
         assert n_train + n_val == len(index)
         
-        chosen = index[:n_train] if self.mode == 'train' else index[n_train:]
-        self.index = chosen
-        
+        train_index = index[:n_train]
+        val_index = index[n_train:]
+        self.index = train_index
+        self._val_index = val_index
+    
+    def get_val_dataset(self):
+        dataset = copy.deepcopy(self)
+        dataset.index = self._val_index
+        return dataset
+    
     def __len__(self):
         return len(self.index)
     
@@ -186,16 +201,14 @@ class LiberoSubgoalImageDataset(Dataset):
         current_img = self._read_image(file, demo_key, current_t)
         current_img = Image.fromarray(current_img)
         current_img = ImageOps.flip(current_img)
-        current_img = current_img.resize(self.resize, Image.BILINEAR)
-        current_img = np.array(current_img).astype(np.float32) / 255.0      # (H, W, C)
+        current_img = np.array(current_img)
         current_img = torch.from_numpy(current_img)
         current_img = current_img.permute(2, 0, 1).contiguous()           # (C, H, W)
         
         subgoal_img = self._read_image(file, demo_key, subgoal_t)
         subgoal_img = Image.fromarray(subgoal_img)
         subgoal_img = ImageOps.flip(subgoal_img)
-        subgoal_img = subgoal_img.resize(self.resize, Image.BILINEAR)
-        subgoal_img = np.array(subgoal_img).astype(np.float32) / 255.0      # (H, W, C)
+        subgoal_img = np.array(subgoal_img)
         subgoal_img = torch.from_numpy(subgoal_img)
         subgoal_img = subgoal_img.permute(2, 0, 1).contiguous()           # (C, H, W)
         

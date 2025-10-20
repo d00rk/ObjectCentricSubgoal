@@ -37,14 +37,17 @@ class SlotEncoder(nn.Module):
         B, C, H, W = images.shape
         device = images.device
         dtype = images.dtype
+        if dtype == torch.uint8:
+            images = images.float().div_(255.0)
+            dtype = images.dtype
+        
+        visual_features, visual_tokens = self.visual_encoder(images, return_tokens=True)    # tokens: (B, n_patches, channel)
+        visual_tokens = visual_tokens.to(device=device, dtype=dtype)
         
         text_tokens = clip.tokenize(instructions, truncate=True).to(device, non_blocking=True)
         text_features = self.text_encoder(text_tokens)
         text_features = text_features.to(dtype=dtype)
         text_features = F.normalize(text_features, dim=-1)                      # (B, text_dim)
-        
-        _, visual_tokens = self.visual_encoder(images, return_tokens=True)    # tokens: (B, n_patches, channel)
-        visual_tokens = visual_tokens.to(device=device, dtype=dtype)
         
         mapped_visual_tokens = self.mapping(visual_tokens)                      # (B, n_patches, feature_dim)
         mapped_visual_tokens = F.normalize(mapped_visual_tokens, dim=-1)        # (B, n_patches, feature_dim)

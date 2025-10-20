@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from r3m import load_r3m
 from slot.model.feature_extractor.base import BaseImageFeatureExtractor
 
@@ -40,7 +41,38 @@ class R3MImageFeatureExtractor(BaseImageFeatureExtractor):
             self._layer4_hook_handle.remove()
             self._layer4_hook_handle = None
     
+    def _preprocess_image(self, x: torch.Tensor) -> torch.Tensor:
+        if x.ndim == 3:
+            if x.shape[-1] == 3:    # HWC -> CHW
+                x = x.permute(2, 0, 1)
+            x = x.unsqueeze(0)      # (1, C, H, W)
+        elif x.ndim == 4:
+            if x.shape[-1] == 3:    # BHWC -> BCHW
+                x = x.permute(0, 3, 1, 2)
+        else:
+            raise ValueError(f"Unsupported tensor shape: {tuple(x.shape)}")
+        
+        if x.dtype == torch.uint8:
+            x = x.to(torch.float32)
+        
+        B, C, H, W = x.shape
+        short = min(H, W)
+        if short != 256:
+            scale = 256.0 / float(short)
+            new_h = int(round(H*scale))
+            new_w = int(round(W*scale))
+            x = F.interpolate(x, size=(new_h, new_w), mode='bicubic', align_corners=False)
+        _, _, h, w = x.shape
+        top = max((h-224)//2, 0)
+        left = max((w-224)//2, 0)
+        x = x[:, :, top:top+224, left:left+224]
+        
+        if x.max() <= 1.5:
+            x = x * 255.0
+        return x
+    
     def forward(self, image: torch.Tensor, return_spatial: bool=False, return_tokens: bool=False,) -> torch.Tensor:
+        image = self._preprocess_image(image)
         if self.freeze:
             with torch.no_grad():
                 global_feat = self.model(image)
