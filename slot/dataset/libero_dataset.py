@@ -60,7 +60,6 @@ class LiberoImageDataset(Dataset):
                 for t in range(0, T):
                     index.append((file, key, t, instruction))
             f.close()
-        f.close()
         
         random.shuffle(index)
         n_val = int(len(index) * self.val_ratio)

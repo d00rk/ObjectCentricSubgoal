@@ -1,0 +1,4 @@
+_target_: slot.model.mapping.TransformerEncoderMapping
+dim: ${globals.feature_dim}
+n_layers: 3
+n_heads: 1

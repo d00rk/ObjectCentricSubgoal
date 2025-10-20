@@ -50,7 +50,7 @@ class SlotAttention(nn.Module):
         if self.use_query_init:
             assert self.num_slots is not None and self.num_lang_slots > 0 and self.num_lang_slots <= self.num_slots, \
                 f"Provide correct number of slots and number of language slots to use query initialization."
-        
+
         if kvq_dim is None:
             self.kvq_dim = dim
         else:
@@ -74,7 +74,6 @@ class SlotAttention(nn.Module):
             qdim += self.add_dim
             
         self.qdim = qdim
-        
         self.to_q = nn.Linear(qdim, self.kvq_dim, bias=use_projection_bias)
         self.to_k = nn.Linear(feature_dim, self.kvq_dim, bias=use_projection_bias)
         self.to_v = nn.Linear(feature_dim, self.kvq_dim, bias=use_projection_bias)
@@ -197,12 +196,12 @@ class SlotAttention(nn.Module):
                 slots, k, v, masks, point_conditioning, dual_conditioning, lang_conditioning
             )
             attn_list.append(attn)
-        return slots, attn_list
+        return slots, attn, attn_list
     
     def forward(
         self,
         inputs: torch.Tensor,
-        conditioning: Optional[torch.Tensor],
+        conditioning: Optional[torch.Tensor]=None,
         masks: Optional[torch.Tensor]=None,
         point_conditioning=None,
         dual_conditioning=None,
@@ -516,45 +515,11 @@ class ControllableSlotAttentionGrouping(nn.Module):
             return out
 
 
-# class StickBreakingGrouping(nn.Module):
-#     def __init__(
-#         self,
-#         object_dim: int,
-#         feature_dim: int,
-#         n_slots: int,
-#         kernel_var: float=1.0,
-#         learn_kernel_var: bool=False,
-#         max_unexplained: float=0.0,
-#         min_slot_mask: float=0.0,
-#         min_max_mask_value: float=0.0,
-#         early_termination: bool=False,
-#         add_unexplained: bool=False,
-#         eps: float=1e-8,
-#         detach_features: bool=False,
-#         use_input_layernorm: bool=False,
-#     ):
-#         super().__init__()
-        
-#         self.n_slots = n_slots
-#         self.object_dim = object
-        
-#         assert kernel_var > 0.0
-#         if learn_kernel_var:
-#             self.kernel_logvar = nn.Parameter(torch.tensor(math.log(kernel_var)))
-#         else:
-#             self.register_buffer("kernel_logvar", torch.tensor(math.log(kernel_var)))
-        
-#         assert 0.0 <= max_unexplained < 1.0
-#         self.max_unexplained = max_unexplained
-        
-#         assert 0.0 <= min_slot_mask < 1.0
-#         self.min_slot_mask = min_slot_mask
-        
-#         assert 0.0 <= min_max_mask_value < 1.0
-#         self.min_max_mask_value = min_max_mask_value
-        
-#         self.early_termination = early_termination
-#         self.add_unexplained = add_unexplained
-        
-#         if add_unexplained and not early_termination:
-#             raise ValueError("'add_unexplained=True' only works with 'early_termination=True'")
+if __name__ == '__main__':
+    sa = SlotAttention(dim=256, feature_dim=384, use_query_init=True,
+                       num_slots=8, num_lang_slots=4)
+    dummy_inputs = torch.zeros(1, 16, 384)
+    dummy_texts = torch.zeros(1, 512)
+    slots, attn, attn_list = sa(inputs=dummy_inputs, text_embeddings=dummy_texts)
+    print(slots.shape)
+    print(attn.shape)

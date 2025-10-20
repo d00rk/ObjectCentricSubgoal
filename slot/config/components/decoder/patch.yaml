@@ -1,0 +1,8 @@
+_target_: slot.model.decoder.PatchDecoder
+object_dim: ${globals.slot_dim}
+output_dim: ${globals.feature_dim_original}
+num_patches: ${globals.n_patches}
+decoder:
+  _target_: slot.utils.neural_networks.build_mlp
+  _partial_: true
+  features: [512, 512, 512]

@@ -49,7 +49,7 @@ def get_libero_subgoal_image_dataloader(dataset_path: str,
                                         val_num_workers: int=0,
                                         val_pin_memory: bool=True,
                                         val_persistent_workers: bool=False) -> DataLoader:
-    train_dataset = LiberoImageDataset(dataset_path=dataset_path,
+    train_dataset = LiberoSubgoalImageDataset(dataset_path=dataset_path,
                                        view=view,
                                        resize=resize,
                                        mode='train',
@@ -57,7 +57,7 @@ def get_libero_subgoal_image_dataloader(dataset_path: str,
                                        seed=seed)
     train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=train_num_workers, pin_memory=train_pin_memory, persistent_workers=train_persistent_workers)
     
-    val_dataset = LiberoImageDataset(dataset_path=dataset_path,
+    val_dataset = LiberoSubgoalImageDataset(dataset_path=dataset_path,
                                      view=view,
                                      resize=resize,
                                      mode='val',

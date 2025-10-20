@@ -1,0 +1,9 @@
+_target_: slot.model.decoder.MLPDecoder
+input_dim: 
+hidden_dim:
+output_dim:
+n_layers:
+activation_func:
+final_activation_func: null
+initial_layer_norm: False
+residual: True

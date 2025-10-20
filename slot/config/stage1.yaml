@@ -1,0 +1,90 @@
+name: stage1
+stage: 1                            # 1 for train slot encoder, 2 for train dynamics, 3 for low-level policy
+img_size: &img_size [128, 128]
+
+defaults:
+- model: slot_encoder
+- components/visual: r3m
+- components/text: clip
+- components/mapping: transformer
+- components/slot: default
+- components/decoder: patch
+- _self_
+
+globals:
+  n_slots: 8
+  slot_dim: 256
+  text_dim: 512
+  feature_dim: ${globals.text_dim}
+  feature_dim_original: 2048         # 768 for clip(vit-b/32), 2048 for r3m(resnet50)
+  n_patches: 16                     # 49 for clip(vit-b/32), 16 for r3m(resnet50)
+
+dataset:
+  dataset_path: data/libero/libero_10
+  view: agentview_rgb
+  resize: ${img_size}
+  seed: ${training.seed}
+  train_batch_size: 256
+  train_num_workers: 0
+  train_pin_memory: True
+  train_persistent_workers: False
+  val_batch_size: 256
+  val_num_workers: 0
+  val_pin_memory: True
+  val_persistent_workers: False
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  betas: [0.95, 0.999]
+  eps: 1.0e-8
+  weight_decay: 1.0e-6
+
+lr_scheduler: 
+  name: cosine
+  num_warmup_steps: 1000
+
+loss:
+  tau: 1.0
+  lambda_contrastive: 0.1
+
+checkpoint:
+  topk:
+    monitor_key: validation_loss
+    mode: min
+    k: 3
+    format_str: 'epoch={epoch:04d}-validation_loss={validation_loss:.3f}.ckpt'
+  save_last_ckpt: True
+
+training:
+  seed: 42
+  device: cuda:1
+  resume: False
+  resume_ckpt: null
+  debug: False
+  num_epochs: 100
+  max_train_steps: null
+  max_val_steps: null
+  val_every: 1
+  checkpoint_every: 10
+  tqdm_interval_sec: 1.0
+
+logging:
+  output_dir: data/outputs/${now:%Y_%m_%d_%H_%M_%S}_${name}
+  wandb: True
+  wandb_args:
+    project: Slot
+    name: ${name}
+    resume: True
+    tags: ["${name}"]
+    id: null
+    group: null
+
+hydra:
+  job:
+    override_dirname: ${name}
+  run:
+    dir: data/outputs/${now:%Y_%m_%d_%H_%M_%S}_${name}
+  sweep:
+    dir: data/outputs/${now:%Y_%m_%d_%H_%M_%S}_${name}
+    subdir: ${hydra.job.num}

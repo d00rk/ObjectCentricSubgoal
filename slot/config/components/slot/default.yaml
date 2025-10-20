@@ -1,0 +1,13 @@
+_target_: slot.model.slot_attention.SlotAttention
+dim: ${globals.slot_dim}
+feature_dim:  ${components.mapping.dim}
+kvq_dim: null
+n_heads: 1
+n_iters: 3
+eps: 1e-8
+use_gru: True
+use_projection_bias: False
+use_query_init: True
+num_slots: ${globals.n_slots}
+num_lang_slots: 4
+text_dim: ${globals.text_dim}

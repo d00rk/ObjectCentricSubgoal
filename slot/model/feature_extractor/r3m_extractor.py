@@ -22,19 +22,46 @@ class R3MImageFeatureExtractor(BaseImageFeatureExtractor):
             self.model.eval()
             for p in self.model.parameters():
                 p.requires_grad_(False)
+        
+        self._spatial_fmap = None
+        self._layer4_hook_handle = self.model.convnet.layer4.register_forward_hook(
+            self._save_spatial_hook
+        )
     
     @property
     def out_dim(self) -> int:
         return self.model.outdim
     
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def _save_spatial_hook(self, module, inputs, output):
+        self._spatial_fmap = output
+    
+    def remove_hooks(self):
+        if self._layer4_hook_handle is not None:
+            self._layer4_hook_handle.remove()
+            self._layer4_hook_handle = None
+    
+    def forward(self, image: torch.Tensor, return_spatial: bool=False, return_tokens: bool=False,) -> torch.Tensor:
         if self.freeze:
             with torch.no_grad():
-                return self.model(image)
+                global_feat = self.model(image)
         else:
-            return self.model(image)
+            global_feat = self.model(image)
         
+        if not (return_spatial or return_tokens):
+            return global_feat
         
+        fmap = self._spatial_fmap
+        assert fmap is not None
+        
+        if return_tokens:
+            B, C, H, W = fmap.shape
+            tokens = fmap.flatten(2).transpose(1, 2).contiguous()
+            if return_spatial:
+                return global_feat, fmap, tokens
+            else:
+                return global_feat, tokens
+        else:
+            return global_feat, fmap
         
 # if __name__ == '__main__':
 #     ext = R3MImageFeatureExtractor()
@@ -53,6 +80,8 @@ class R3MImageFeatureExtractor(BaseImageFeatureExtractor):
 #     image = image.unsqueeze(0).to(device)
 #     ext = ext.to(device)
 #     # image = extractor.preprocess(image).unsqueeze(0).to(device=device, dtype=dtype)
-#     image_features = ext(image)
+#     global_feature, fmp, tokens = ext(image, return_spatial=True, return_tokens=True)
 #     # image_features /= image_features.norm(dim=-1, keepdim=True)
-#     print(image_features.shape)
+#     print(global_feature.shape)
+#     print(fmp.shape)
+#     print(tokens.shape)

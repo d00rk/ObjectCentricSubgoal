@@ -1,0 +1,3 @@
+_target_: slot.model.feature_extractor.r3m_extractor.R3MImageFeatureExtractor
+model_type: resnet50    # resnet18, resnet34, resnet50
+freeze: True

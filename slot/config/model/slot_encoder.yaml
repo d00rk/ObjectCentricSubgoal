@@ -1,0 +1,6 @@
+_target_: slot.policy.slot_encoder.SlotEncoder
+visual_encoder: ${components.visual}
+text_encoder: ${components.text}
+mapping: ${components.mapping}
+slot_attention: ${components.slot}
+decoder: ${components.decoder}
