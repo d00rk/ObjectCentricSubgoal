@@ -18,8 +18,10 @@ from slot.utils.pytorch_uilts import optimizer_to, get_learnable_params
 from slot.utils.logging import JsonLogger
 from slot.utils.checkpoint import TopKCheckpointManager, save_checkpoint, load_checkpoint
 
+from memory_profiler import profile
 
 @hydra.main(version_base=None, config_path='./slot/config', config_name='stage1.yaml')
+@profile
 def main(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
     
@@ -41,8 +43,19 @@ def main(cfg: OmegaConf):
     
     policy = hydra.utils.instantiate(cfg.model)
     learnable_params = list(get_learnable_params(policy))
-    optimizer = hydra.utils.instantiate(cfg.optimizer, params=learnable_params)
+    base_params = [p for p in learnable_params if p is not policy.logit_scale]
+    logit_params = [policy.logit_scale]
+    assert all(id(p) != id(logit_params[0]) for p in base_params)
 
+    param_group = [
+        {"params": base_params, "" "weight_decay": cfg.optimizer.weight_decay, },
+        {"params": logit_params, "weight_decay": 0.0},
+    ]
+    
+    optimizer = hydra.utils.instantiate(cfg.optimizer, params=param_group)
+
+    print(f"Total Learnable Parameters {sum(p.numel() for p in learnable_params)/1e6:.3f}M")
+    
     lr_scheduler = get_scheduler(cfg.lr_scheduler.name, optimizer=optimizer, num_warmup_steps=cfg.lr_scheduler.num_warmup_steps,
                                  num_training_steps=(len(train_dataloader)*cfg.training.num_epochs), last_epoch=-1)
     
@@ -72,8 +85,8 @@ def main(cfg: OmegaConf):
     
     if cfg.training.debug:
         cfg.training.num_epochs = 2
-        cfg.training.max_train_steps = 3
-        cfg.training.max_val_steps = 3
+        cfg.training.max_train_steps = 20
+        cfg.training.max_val_steps = 20
         cfg.training.val_every = 1
         cfg.training.checkpoint_every = 1
     
@@ -100,19 +113,21 @@ def main(cfg: OmegaConf):
             patch = int(math.sqrt(P))
             assert patch*patch == P
             gt_feature = gt_feature.view(B, patch, patch, -1)
+            gt_feature = F.normalize(gt_feature.float(), dim=-1)
             reconstructed_feature = output['reconstruction']
+            reconstructed_feature = F.normalize(reconstructed_feature.float(), dim=-1)
             loss_recon = F.mse_loss(gt_feature, reconstructed_feature)
             
             # Contrastive loss
             attn = output['attn'].float()                            # (B, num_slots, num_patches)
             image_tokens = output['mapped_visual_tokens'].float()    # (B, num_patches, feature_dim)
             slot_embedding = torch.einsum('bkp,bpd->bkd', attn, image_tokens)
-            slot_embedding = F.normalize(slot_embedding, dim=-1)    # (B, S, feature_dim)
+            slot_embedding = F.normalize(slot_embedding.float(), dim=-1)    # (B, S, feature_dim)
             text_features = F.normalize(output['text_features'].float(), dim=-1)
             
             sim_bkb = torch.einsum('bkd,jd->bkj', slot_embedding, text_features)
-            logits_i2t = sim_bkb.max(dim=1).values
-            logits_i2t = logits_i2t / cfg.loss.tau
+            logit_scale_exp = policy.logit_scale.exp().clamp(max=100.0)
+            logits_i2t = sim_bkb.max(dim=1).values * logit_scale_exp
             logits_t2i = logits_i2t.t()
             
             targets = torch.arange(logits_i2t.size(0), device=device)
@@ -124,7 +139,7 @@ def main(cfg: OmegaConf):
             
             optimizer.zero_grad(set_to_none=True)
             loss_total.backward()
-            clip_grad_norm_(learnable_params, 1.0)
+            clip_grad_norm_(learnable_params, 5.0)
             optimizer.step()
             lr_scheduler.step()
             
@@ -140,6 +155,7 @@ def main(cfg: OmegaConf):
                 'train/loss': raw_loss_total,
                 'train/loss_recon': raw_loss_recon,
                 'train/loss_contrastive': raw_loss_cont,
+                'debug/logit_scale_exp': logit_scale_exp.item(),
                 'global_step': global_step,
                 'epoch': epoch,
                 'lr': lr_scheduler.get_last_lr()[0]
@@ -180,10 +196,12 @@ def main(cfg: OmegaConf):
                     patch = int(math.sqrt(P))
                     assert patch*patch == P
                     gt_feature = gt_feature.view(B, patch, patch, -1)
+                    gt_feature = F.normalize(gt_feature, dim=-1)
                     reconstructed_feature = output['reconstruction']
+                    reconstructed_feature = F.normalize(reconstructed_feature, dim=-1)
                     loss_recon = F.mse_loss(gt_feature, reconstructed_feature)
                     
-                    cos_map = F.cosine_similarity(reconstructed_feature, F.normalize(gt_feature, dim=-1), dim=-1)
+                    cos_map = F.cosine_similarity(reconstructed_feature, gt_feature).clamp(-1, 1)
                     cos_img = (cos_map.clamp(-1, 1)*0.5 + 0.5)
                     cos_img = cos_img.unsqueeze(1).cpu()
                     
@@ -198,7 +216,8 @@ def main(cfg: OmegaConf):
                     text_features = F.normalize(output['text_features'].float(), dim=-1)
                     
                     sim_bkb = torch.einsum('bkd,jd->bkj', slot_embedding, text_features)
-                    logits_i2t = sim_bkb.max(dim=1).values / cfg.loss.tau
+                    logit_scale_exp = policy.logit_scale.exp().clamp(max=100.0)
+                    logits_i2t = sim_bkb.max(dim=1).values * logit_scale_exp
                     logits_t2i = logits_i2t.t()
                     
                     targets = torch.arange(logits_i2t.size(0), device=device)
@@ -211,6 +230,9 @@ def main(cfg: OmegaConf):
                     total_val_loss.append(loss_total.item())
                     total_val_recon.append(loss_recon.item())
                     total_val_cont.append(loss_contrastive.item())
+                    
+                    if cfg.training.max_val_steps is not None and batch_idx >= cfg.training.max_val_steps-1:
+                        break
                 
                 val_loss = np.mean(total_val_loss)
                 val_recon_loss = np.mean(total_val_recon)
@@ -242,7 +264,7 @@ def main(cfg: OmegaConf):
         global_step += 1
     json_logger.stop()
     end_time = datetime.now()
-    print(f"End training at {end_time:%Y-%m-%d %H:%M%S}")
+    print(f"End training at {end_time:%Y-%m-%d %H:%M:%S}")
     print(f"Saved logs at {output_dir}")
 
 if __name__=='__main__':

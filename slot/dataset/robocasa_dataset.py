@@ -10,22 +10,20 @@ import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from libero.libero import benchmark, get_libero_path
 
 from slot.utils.common import set_seed
 
 
-class LiberoImageDataset(Dataset):
+class RobocasaImageDataset(Dataset):
     """
-    Single-view frame dataset for Libero demos.
+    Single-view frame dataset for Robocasa demos.
     
     Return: {current_image, file, demo, current_step, instruction}
     - current_image: (C, H, W)
     """
     def __init__(self,
                  dataset_path: Union[str, List[str]],
-                 view: str='agentview_rgb',
-                #  mode: str='train',
+                 view: str='robot0_agentview_left_image',
                  val_ratio: float=0.1,
                  seed: int=42,
                  ):
@@ -33,7 +31,7 @@ class LiberoImageDataset(Dataset):
         set_seed(seed)
         
         if dataset_path is None:
-            dataset_path = get_libero_path('dataset')
+            raise ValueError("Please provide 'dataset_path'.")
         
         self.dataset_path = dataset_path
         self.view = view

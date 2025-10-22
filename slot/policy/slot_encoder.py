@@ -32,6 +32,8 @@ class SlotEncoder(nn.Module):
         self.mapping = mapping
         self.slot_attention = slot_attention
         self.decoder = decoder
+        
+        self.logit_scale = nn.Parameter(torch.tensor(math.log(1/0.07), dtype=torch.float32))
     
     def forward(self, images: torch.Tensor, instructions: str) -> Dict[str, torch.Tensor]:
         B, C, H, W = images.shape
@@ -50,10 +52,10 @@ class SlotEncoder(nn.Module):
         text_features = F.normalize(text_features, dim=-1)                      # (B, text_dim)
         
         mapped_visual_tokens = self.mapping(visual_tokens)                      # (B, n_patches, feature_dim)
-        mapped_visual_tokens = F.normalize(mapped_visual_tokens, dim=-1)        # (B, n_patches, feature_dim)
+        mapped_visual_tokens_n = F.normalize(mapped_visual_tokens, dim=-1)        # (B, n_patches, feature_dim)
         
         slots, attn, attn_list = self.slot_attention(
-            inputs=mapped_visual_tokens,
+            inputs=mapped_visual_tokens_n,
             text_embeddings=text_features.unsqueeze(1)
         )                                                                       # slots: (B, n_slots, slot_dim), attn: (B, n_slots, n_patches)
         recon = self.decoder(slots)
@@ -61,7 +63,6 @@ class SlotEncoder(nn.Module):
         num_patches = pred.shape[1]
         patch = int(math.sqrt(num_patches))
         pred = pred.view(B, patch, patch, -1)       # (B, num_patches**1/2, num_patches**1/2, feature_dim_original)
-        pred = F.normalize(pred, dim=-1)            # (B, num_patches**1/2, num_patches**1/2, feature_dim_original)
 
         return {
             'slots': slots,

@@ -1,0 +1,256 @@
+Total Learnable Parameters 11.641M
+Start training for 2 epochs at 2025-10-21 17:30:57
+End training at 2025-10-21 17:3153
+Saved logs at data/outputs/2025_10_21_17_29_05_stage1
+Filename: train.py
+
+Line #    Mem usage    Increment  Occurrences   Line Contents
+=============================================================
+    23    442.2 MiB    442.2 MiB           1   @hydra.main(version_base=None, config_path='./slot/config', config_name='stage1.yaml')
+    24                                         @profile
+    25                                         def main(cfg: OmegaConf):
+    26    442.3 MiB      0.1 MiB           1       OmegaConf.resolve(cfg)
+    27                                             
+    28    442.3 MiB      0.0 MiB           1       seed = cfg.training.seed
+    29    442.5 MiB      0.2 MiB           1       set_seed(seed)
+    30                                             
+    31    442.5 MiB      0.0 MiB           1       stage = int(cfg.stage)
+    32    442.5 MiB      0.0 MiB           1       device = torch.device(cfg.training.device)
+    33    442.5 MiB      0.0 MiB           1       output_dir = str(cfg.logging.output_dir)
+    34    442.5 MiB      0.0 MiB           1       os.makedirs(output_dir, exist_ok=True)
+    35    442.5 MiB      0.0 MiB           1       vis_dir = os.path.join(output_dir, 'visualization')
+    36    442.5 MiB      0.0 MiB           1       os.makedirs(vis_dir, exist_ok=True)
+    37    442.5 MiB      0.0 MiB           1       log_path = os.path.join(output_dir, 'logs.json')
+    38                                             
+    39    442.5 MiB      0.0 MiB           1       if stage == 1:
+    40    534.1 MiB     91.7 MiB           1           train_dataloader, val_dataloader = get_libero_image_dataloader(**cfg.dataset)
+    41                                             elif stage == 2:
+    42                                                 train_dataloader, val_dataloader = get_libero_subgoal_image_dataloader(**cfg.dataset)
+    43                                             
+    44   2640.0 MiB   2105.9 MiB           1       policy = hydra.utils.instantiate(cfg.model)
+    45   2640.0 MiB      0.0 MiB           1       learnable_params = list(get_learnable_params(policy))
+    46   2640.0 MiB      0.0 MiB          67       base_params = [p for p in learnable_params if p is not policy.logit_scale]
+    47   2640.0 MiB      0.0 MiB           1       logit_params = [policy.logit_scale]
+    48   2640.0 MiB      0.0 MiB         129       assert all(id(p) != id(logit_params[0]) for p in base_params)
+    49                                         
+    50   2640.0 MiB      0.0 MiB           1       param_group = [
+    51   2640.0 MiB      0.0 MiB           1           {"params": base_params, "" "weight_decay": cfg.optimizer.weight_decay, },
+    52   2640.0 MiB      0.0 MiB           1           {"params": logit_params, "weight_decay": 0.0},
+    53                                             ]
+    54                                             
+    55   2640.0 MiB      0.0 MiB           1       optimizer = hydra.utils.instantiate(cfg.optimizer, params=param_group)
+    56                                         
+    57   2640.0 MiB      0.0 MiB         131       print(f"Total Learnable Parameters {sum(p.numel() for p in learnable_params)/1e6:.3f}M")
+    58                                             
+    59   2640.0 MiB      0.0 MiB           2       lr_scheduler = get_scheduler(cfg.lr_scheduler.name, optimizer=optimizer, num_warmup_steps=cfg.lr_scheduler.num_warmup_steps,
+    60   2640.0 MiB      0.0 MiB           1                                    num_training_steps=(len(train_dataloader)*cfg.training.num_epochs), last_epoch=-1)
+    61                                             
+    62   2640.0 MiB      0.0 MiB           1       if cfg.training.resume:
+    63                                                 ckpt_path = cfg.training.resume_ckpt
+    64                                                 if ckpt_path.is_file():
+    65                                                     print(f"Resuming from checkpoint: {ckpt_path}")
+    66                                                     cfg = load_checkpoint(ckpt_path, model=policy, optimizer=optimizer, lr_scheduler=lr_scheduler)
+    67                                                     learnable_params = list(get_learnable_params(policy))
+    68                                                     
+    69   2640.0 MiB      0.0 MiB           1       policy.to(device)
+    70   2640.0 MiB      0.0 MiB           1       optimizer_to(optimizer, device)
+    71                                             
+    72   2640.0 MiB      0.0 MiB           1       topk_manager = TopKCheckpointManager(save_dir=os.path.join(output_dir, 'checkpoints'), **cfg.checkpoint.topk)
+    73                                             
+    74   2640.0 MiB      0.0 MiB           1       if cfg.logging.wandb:
+    75                                                 wandb_run = wandb.init(
+    76                                                     dir=output_dir,
+    77                                                     config=OmegaConf.to_container(cfg, resolve=True),
+    78                                                     **cfg.logging.wandb_args
+    79                                                 )
+    80                                                 wandb.config.update(
+    81                                                     {
+    82                                                         'output_dir': output_dir
+    83                                                     }
+    84                                                 )
+    85                                             
+    86   2640.0 MiB      0.0 MiB           1       if cfg.training.debug:
+    87   2640.0 MiB      0.0 MiB           1           cfg.training.num_epochs = 2
+    88   2640.0 MiB      0.0 MiB           1           cfg.training.max_train_steps = 20
+    89   2640.0 MiB      0.0 MiB           1           cfg.training.max_val_steps = 20
+    90   2640.0 MiB      0.0 MiB           1           cfg.training.val_every = 1
+    91   2640.0 MiB      0.0 MiB           1           cfg.training.checkpoint_every = 1
+    92                                             
+    93   2640.0 MiB      0.0 MiB           1       json_logger = JsonLogger(log_path)
+    94   2640.0 MiB      0.0 MiB           1       json_logger.start()
+    95   2640.0 MiB      0.0 MiB           1       global_step = 0
+    96                                             
+    97   2640.0 MiB      0.0 MiB           1       start_time = datetime.now()
+    98   2640.0 MiB      0.0 MiB           1       print(f"Start training for {cfg.training.num_epochs} epochs at {start_time:%Y-%m-%d %H:%M:%S}")
+    99   3698.1 MiB      0.0 MiB           3       for epoch in range(int(cfg.training.num_epochs)):
+   100   3673.4 MiB      0.0 MiB           2           train_pbar = tqdm.tqdm(train_dataloader, desc=f'Training', leave=False, mininterval=cfg.training.tqdm_interval_sec)
+   101   3673.4 MiB      0.0 MiB           2           policy.train()
+   102   3673.4 MiB      0.0 MiB           2           total_loss, total_recon, total_con = list(), list(), list()
+   103   3673.4 MiB      0.0 MiB           2           step_log = dict()
+   104   3714.9 MiB    144.7 MiB          40           for batch_idx, batch in enumerate(train_pbar):
+   105   3714.9 MiB      0.0 MiB          40               imgs = batch['current_image'].to(device, non_blocking=True)
+   106   3714.9 MiB      0.0 MiB          40               instructions = batch['instruction']
+   107                                                     
+   108   3714.9 MiB    943.8 MiB          40               output = policy(imgs, instructions)
+   109                                         
+   110                                                     # Feature reconstruction loss
+   111   3714.9 MiB      0.0 MiB          40               gt_feature = output['visual_tokens']
+   112   3714.9 MiB      0.0 MiB          40               B, P, _ = gt_feature.shape
+   113   3714.9 MiB      0.0 MiB          40               patch = int(math.sqrt(P))
+   114   3714.9 MiB      0.0 MiB          40               assert patch*patch == P
+   115   3714.9 MiB      0.0 MiB          40               gt_feature = gt_feature.view(B, patch, patch, -1)
+   116   3714.9 MiB      0.0 MiB          40               gt_feature = F.normalize(gt_feature.float(), dim=-1)
+   117   3714.9 MiB      0.0 MiB          40               reconstructed_feature = output['reconstruction']
+   118   3714.9 MiB      0.0 MiB          40               reconstructed_feature = F.normalize(reconstructed_feature.float(), dim=-1)
+   119   3714.9 MiB      1.9 MiB          40               loss_recon = F.mse_loss(gt_feature, reconstructed_feature)
+   120                                                     
+   121                                                     # Contrastive loss
+   122   3714.9 MiB      0.0 MiB          40               attn = output['attn'].float()                            # (B, num_slots, num_patches)
+   123   3714.9 MiB      0.0 MiB          40               image_tokens = output['mapped_visual_tokens'].float()    # (B, num_patches, feature_dim)
+   124   3714.9 MiB      0.0 MiB          40               slot_embedding = torch.einsum('bkp,bpd->bkd', attn, image_tokens)
+   125   3714.9 MiB      0.0 MiB          40               slot_embedding = F.normalize(slot_embedding.float(), dim=-1)    # (B, S, feature_dim)
+   126   3714.9 MiB      0.0 MiB          40               text_features = F.normalize(output['text_features'].float(), dim=-1)
+   127                                                     
+   128   3714.9 MiB      0.0 MiB          40               sim_bkb = torch.einsum('bkd,jd->bkj', slot_embedding, text_features)
+   129   3714.9 MiB      0.0 MiB          40               logit_scale_exp = policy.logit_scale.exp().clamp(max=100.0)
+   130   3714.9 MiB      0.0 MiB          40               logits_i2t = sim_bkb.max(dim=1).values * logit_scale_exp
+   131   3714.9 MiB      0.0 MiB          40               logits_t2i = logits_i2t.t()
+   132                                                     
+   133   3714.9 MiB      0.0 MiB          40               targets = torch.arange(logits_i2t.size(0), device=device)
+   134   3714.9 MiB      0.0 MiB          40               loss_i2t = F.cross_entropy(logits_i2t, targets)
+   135   3714.9 MiB      0.0 MiB          40               loss_t2i = F.cross_entropy(logits_t2i, targets)
+   136   3714.9 MiB      0.0 MiB          40               loss_contrastive = 0.5 * (loss_i2t + loss_t2i)
+   137                                                     
+   138   3714.9 MiB      0.0 MiB          40               loss_total = loss_recon + cfg.loss.lambda_contrastive * loss_contrastive
+   139                                                     
+   140   3714.9 MiB      0.0 MiB          40               optimizer.zero_grad(set_to_none=True)
+   141   3714.9 MiB      1.0 MiB          40               loss_total.backward()
+   142   3714.9 MiB      0.0 MiB          40               clip_grad_norm_(learnable_params, 5.0)
+   143   3714.9 MiB      0.0 MiB          40               optimizer.step()
+   144   3714.9 MiB      0.0 MiB          40               lr_scheduler.step()
+   145                                                     
+   146   3714.9 MiB      0.0 MiB          40               raw_loss_total = loss_total.item()
+   147   3714.9 MiB      0.0 MiB          40               raw_loss_recon = loss_recon.item()
+   148   3714.9 MiB      0.0 MiB          40               raw_loss_cont = loss_contrastive.item()
+   149   3714.9 MiB      0.0 MiB          40               train_pbar.set_postfix(loss=raw_loss_total, refresh=False)
+   150   3714.9 MiB      0.0 MiB          40               total_loss.append(raw_loss_total)
+   151   3714.9 MiB      0.0 MiB          40               total_recon.append(raw_loss_recon)
+   152   3714.9 MiB      0.0 MiB          40               total_con.append(raw_loss_cont)
+   153                                                     
+   154   3714.9 MiB      0.0 MiB          40               step_log = {
+   155   3714.9 MiB      0.0 MiB          40                   'train/loss': raw_loss_total,
+   156   3714.9 MiB      0.0 MiB          40                   'train/loss_recon': raw_loss_recon,
+   157   3714.9 MiB      0.0 MiB          40                   'train/loss_contrastive': raw_loss_cont,
+   158   3714.9 MiB      0.0 MiB          40                   'debug/logit_scale_exp': logit_scale_exp.item(),
+   159   3714.9 MiB      0.0 MiB          40                   'global_step': global_step,
+   160   3714.9 MiB      0.0 MiB          40                   'epoch': epoch,
+   161   3714.9 MiB      0.0 MiB          40                   'lr': lr_scheduler.get_last_lr()[0]
+   162                                                     }
+   163                                                     
+   164   3714.9 MiB      0.0 MiB          40               is_last_batch = (batch_idx == len(train_dataloader)-1)
+   165   3714.9 MiB      0.0 MiB          40               if not is_last_batch:
+   166   3714.9 MiB      0.0 MiB          40                   if cfg.logging.wandb:
+   167                                                             wandb_run.log(step_log, step=global_step)
+   168   3714.9 MiB      0.0 MiB          40                   json_logger.log(step_log)
+   169   3714.9 MiB      0.0 MiB          40                   global_step += 1
+   170                                                     
+   171   3714.9 MiB      0.0 MiB          40               if cfg.training.max_train_steps is not None and batch_idx >= cfg.training.max_train_steps-1:
+   172   3698.3 MiB    -34.1 MiB           2                   break
+   173                                                 
+   174                                                 # at the end of each epoch
+   175   3698.3 MiB      0.0 MiB           2           train_loss = np.mean(total_loss)
+   176   3698.3 MiB      0.0 MiB           2           train_recon_loss = np.mean(total_recon)
+   177   3698.3 MiB      0.0 MiB           2           train_cont_loss = np.mean(total_con)
+   178   3698.3 MiB      0.0 MiB           2           step_log['train/loss'] = train_loss
+   179   3698.3 MiB      0.0 MiB           2           step_log['train/loss_recon'] = train_recon_loss
+   180   3698.3 MiB      0.0 MiB           2           step_log['train/loss_contrastive'] = train_cont_loss
+   181                                                 
+   182   3698.3 MiB      0.0 MiB           2           if epoch % cfg.training.val_every == 0:
+   183   3698.3 MiB      0.0 MiB           2               policy.eval()
+   184   3698.3 MiB      0.0 MiB           2               with torch.no_grad():
+   185   3698.3 MiB      0.0 MiB           2                   total_val_loss, total_val_recon, total_val_cont = list(), list(), list()
+   186   3698.3 MiB      0.0 MiB           2                   val_pbar = tqdm.tqdm(val_dataloader, desc=f'Validation', leave=False, mininterval=cfg.training.tqdm_interval_sec)
+   187   3698.3 MiB      0.0 MiB          40                   for batch_idx, batch in enumerate(val_pbar):
+   188   3698.3 MiB      0.0 MiB          40                       imgs = batch['current_image'].to(device)
+   189   3698.3 MiB      0.0 MiB          40                       instructions = batch['instruction']
+   190                                                             
+   191   3698.3 MiB      0.0 MiB          40                       output = policy(imgs, instructions)
+   192                                         
+   193                                                             # Feature reconstruction loss
+   194   3698.3 MiB      0.0 MiB          40                       gt_feature = output['visual_tokens']
+   195   3698.3 MiB      0.0 MiB          40                       B, P, _ = gt_feature.shape
+   196   3698.3 MiB      0.0 MiB          40                       patch = int(math.sqrt(P))
+   197   3698.3 MiB      0.0 MiB          40                       assert patch*patch == P
+   198   3698.3 MiB      0.0 MiB          40                       gt_feature = gt_feature.view(B, patch, patch, -1)
+   199   3698.3 MiB      0.0 MiB          40                       gt_feature = F.normalize(gt_feature, dim=-1)
+   200   3698.3 MiB      0.0 MiB          40                       reconstructed_feature = output['reconstruction']
+   201   3698.3 MiB      0.0 MiB          40                       reconstructed_feature = F.normalize(reconstructed_feature, dim=-1)
+   202   3698.3 MiB      0.0 MiB          40                       loss_recon = F.mse_loss(gt_feature, reconstructed_feature)
+   203                                                             
+   204   3698.3 MiB      0.0 MiB          40                       cos_map = F.cosine_similarity(reconstructed_feature, gt_feature).clamp(-1, 1)
+   205   3698.3 MiB      0.0 MiB          40                       cos_img = (cos_map.clamp(-1, 1)*0.5 + 0.5)
+   206   3698.3 MiB      0.0 MiB          40                       cos_img = cos_img.unsqueeze(1).cpu()
+   207                                                             
+   208   3698.3 MiB      0.0 MiB          40                       save_image(cos_img[:8, ...], os.path.join(vis_dir, f'heatmap_epoch={epoch:03d}_batch={batch_idx:03d}.png'), nrow=4)
+   209                                                             
+   210                                                             # Contrastive loss
+   211   3698.3 MiB      0.0 MiB          40                       attn = output['attn'].float()                            # (B, num_slots, num_patches)
+   212   3698.3 MiB      0.0 MiB          40                       image_tokens = output['mapped_visual_tokens'].float()    # (B, num_patches, feature_dim)
+   213   3698.3 MiB      0.0 MiB          40                       slot_embedding = torch.einsum('bkp,bpd->bkd', attn, image_tokens)
+   214   3698.3 MiB      0.0 MiB          40                       slot_embedding = F.normalize(slot_embedding, dim=-1)     # (B, )
+   215                                                             
+   216   3698.3 MiB      0.0 MiB          40                       text_features = F.normalize(output['text_features'].float(), dim=-1)
+   217                                                             
+   218   3698.3 MiB      0.0 MiB          40                       sim_bkb = torch.einsum('bkd,jd->bkj', slot_embedding, text_features)
+   219   3698.3 MiB      0.0 MiB          40                       logit_scale_exp = policy.logit_scale.exp().clamp(max=100.0)
+   220   3698.3 MiB      0.0 MiB          40                       logits_i2t = sim_bkb.max(dim=1).values * logit_scale_exp
+   221   3698.3 MiB      0.0 MiB          40                       logits_t2i = logits_i2t.t()
+   222                                                             
+   223   3698.3 MiB      0.0 MiB          40                       targets = torch.arange(logits_i2t.size(0), device=device)
+   224   3698.3 MiB      0.0 MiB          40                       loss_i2t = F.cross_entropy(logits_i2t, targets)
+   225   3698.3 MiB      0.0 MiB          40                       loss_t2i = F.cross_entropy(logits_t2i, targets)
+   226   3698.3 MiB      0.0 MiB          40                       loss_contrastive = 0.5 * (loss_i2t + loss_t2i)
+   227                                                             
+   228   3698.3 MiB      0.0 MiB          40                       loss_total = loss_recon + cfg.loss.lambda_contrastive * loss_contrastive
+   229                                                             
+   230   3698.3 MiB      0.0 MiB          40                       total_val_loss.append(loss_total.item())
+   231   3698.3 MiB      0.0 MiB          40                       total_val_recon.append(loss_recon.item())
+   232   3698.3 MiB      0.0 MiB          40                       total_val_cont.append(loss_contrastive.item())
+   233                                                             
+   234   3698.3 MiB      0.0 MiB          40                       if cfg.training.max_val_steps is not None and batch_idx >= cfg.training.max_val_steps-1:
+   235   3698.3 MiB      0.0 MiB           2                           break
+   236                                                         
+   237   3698.3 MiB      0.0 MiB           2                   val_loss = np.mean(total_val_loss)
+   238   3698.3 MiB      0.0 MiB           2                   val_recon_loss = np.mean(total_val_recon)
+   239   3698.3 MiB      0.0 MiB           2                   val_cont_loss = np.mean(total_val_cont)
+   240   3698.3 MiB      0.0 MiB           2                   step_log['validation/loss'] = val_loss
+   241   3698.3 MiB      0.0 MiB           2                   step_log['validation/loss_recon'] = val_recon_loss
+   242   3698.3 MiB      0.0 MiB           2                   step_log['validation/loss_contrastive'] = val_cont_loss
+   243                                                 
+   244   3698.3 MiB      0.0 MiB           2           if epoch % cfg.training.checkpoint_every == 0:
+   245   3698.3 MiB      0.0 MiB           2               if cfg.checkpoint.save_last_ckpt:
+   246   3698.1 MiB      0.6 MiB           2                   save_checkpoint(model=policy, optimizer=optimizer, lr_scheduler=lr_scheduler, cfg=cfg, path=os.path.join(output_dir, 'checkpoints', 'latest.ckpt'))
+   247                                                     
+   248   3698.1 MiB      0.0 MiB           2               metric_dict = dict()
+   249   3698.1 MiB      0.0 MiB          22               for k, v in step_log.items():
+   250   3698.1 MiB      0.0 MiB          20                   new_key = k.replace('/', '_')
+   251   3698.1 MiB      0.0 MiB          20                   metric_dict[new_key] = v
+   252                                                     
+   253   3698.1 MiB      0.0 MiB           2               topk_ckpt_path = topk_manager.get_ckpt_path(metric_dict)
+   254                                                     
+   255   3698.1 MiB      0.0 MiB           2               if topk_ckpt_path is not None:
+   256   3698.1 MiB      0.0 MiB           2                   save_checkpoint(model=policy, optimizer=optimizer, lr_scheduler=lr_scheduler, cfg=cfg, path=topk_ckpt_path)
+   257                                                     
+   258   3698.1 MiB      0.0 MiB           2               import gc; gc.collect()
+   259                                                     
+   260   3698.1 MiB      0.0 MiB           2           policy.train()
+   261   3698.1 MiB      0.0 MiB           2           if cfg.logging.wandb:
+   262                                                     wandb_run.log(step_log, step=global_step)
+   263   3698.1 MiB      0.0 MiB           2           json_logger.log(step_log)
+   264   3698.1 MiB      0.0 MiB           2           global_step += 1
+   265   3698.1 MiB      0.0 MiB           1       json_logger.stop()
+   266   3698.1 MiB      0.0 MiB           1       end_time = datetime.now()
+   267   3698.1 MiB      0.0 MiB           1       print(f"End training at {end_time:%Y-%m-%d %H:%M%S}")
+   268   3698.1 MiB      0.0 MiB           1       print(f"Saved logs at {output_dir}")
+
+
