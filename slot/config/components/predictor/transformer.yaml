@@ -1,0 +1,9 @@
+_target_: slot.model.slot_transformer.SlotTransformer
+dim: ${globals.slot_dim}
+language_dim: ${globals.text_dim}
+n_layers: 3
+n_heads: 1
+mlp_ratio: 4.0
+dropout: 0.0
+residual_to_input: True
+return_attn: True

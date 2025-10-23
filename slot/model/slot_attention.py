@@ -110,6 +110,7 @@ class SlotAttention(nn.Module):
             self.text_to_slot = nn.Linear(self.text_dim, dim)
             rem = self.num_slots - self.num_lang_slots
             self.learnable_slots = nn.Parameter(torch.randn(rem, dim))
+            self.lang_slot_bias = nn.Parameter(torch.zeros(self.num_lang_slots, self.dim))
     
     def step(
         self,
@@ -223,6 +224,7 @@ class SlotAttention(nn.Module):
             
             # M slots initialized by language embeddings.
             lang_slots = self.text_to_slot(text_embeddings[:, :self.num_lang_slots])        # (B, M, dim)
+            lang_slots = lang_slots + self.lang_slot_bias.unsqueeze(0)
             
             # (K-M) slots
             learnable = self.learnable_slots.unsqueeze(0).repeat(B, 1, 1)                   # (B, K-M, dim)
@@ -513,13 +515,3 @@ class ControllableSlotAttentionGrouping(nn.Module):
             out['dual_attn_2'] = dual_attn_list[1]
             out['dual_attn_3'] = dual_attn_list[2]
             return out
-
-
-if __name__ == '__main__':
-    sa = SlotAttention(dim=256, feature_dim=384, use_query_init=True,
-                       num_slots=8, num_lang_slots=4)
-    dummy_inputs = torch.zeros(1, 16, 384)
-    dummy_texts = torch.zeros(1, 512)
-    slots, attn, attn_list = sa(inputs=dummy_inputs, text_embeddings=dummy_texts)
-    print(slots.shape)
-    print(attn.shape)

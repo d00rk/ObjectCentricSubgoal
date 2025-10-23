@@ -1,33 +1,31 @@
-name: stage1_libero90_clip
-stage: 1                            # 1 for train slot encoder, 2 for train dynamics, 3 for low-level policy
+name: stage2_libero90_clip
+stage: 2                            # 1 for train slot encoder, 2 for train dynamics, 3 for low-level policy
 
 defaults:
-- model: slot_encoder
-- components/visual: clip
-- components/text: clip
-- components/mapping: transformer
-- components/slot: default
-- components/decoder: patch
+- model: slot_predictor
+- components/predictor: transformer
+- components/decoder: rgb
 - _self_
 
 globals:
-  n_slots: 8
   slot_dim: 256
   text_dim: 512
-  feature_dim: ${globals.text_dim}
-  feature_dim_original: 768         # 768 for clip(vit-b/32), 2048 for r3m(resnet50)
-  n_patches: 49                      # 49 for clip(vit-b/32), r3m(resnet50)
+  pretrained_encoder: data/outputs/2025_10_21/17_34_38_stage1/checkpoints/latest.ckpt               # encoder ckpt path
+  freeze_mapping: True
+  freeze_slot_attention: True
+  freeze_decoder: False
+  rgb_decoder: ${components.decoder}
 
 dataset:
-  _target_: slot.dataset.dataloader.get_libero_image_dataloader
+  _target_: slot.dataset.dataloader.get_libero_subgoal_image_dataloader
   dataset_path: data/libero/libero_90
   view: agentview_rgb
   seed: ${training.seed}
-  train_batch_size: 256
+  train_batch_size: 32
   train_num_workers: 0
   train_pin_memory: True
   train_persistent_workers: False
-  val_batch_size: 256
+  val_batch_size: 32
   val_num_workers: 0
   val_pin_memory: True
   val_persistent_workers: False
@@ -45,8 +43,11 @@ lr_scheduler:
   num_warmup_steps: 500
 
 loss:
-  tau: 1.0
-  lambda_contrastive: 0.1
+  sim_threshold: 3.5
+  huber_delta: 1.0
+  rgb_lp: 0.1                 # valid when training rgb reconstruction decoder
+  rgb_entropy_alpha: 0.1      # valid when training rgb reconstruction decoder
+
 
 checkpoint:
   topk:

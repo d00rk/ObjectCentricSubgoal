@@ -1,0 +1,7 @@
+_target_: slot.policy.slot_predictor.SlotSubgoalPredictor
+predictor: ${components.predictor}
+pretrained_ckpt_path: ${globals.pretrained_encoder}
+rgb_decoder: ${globals.rgb_decoder}
+freeze_mapping: ${globals.freeze_mapping}
+freeze_slot_attention: ${globals.freeze_slot_attention}
+freeze_decoder: ${globals.freeze_decoder}

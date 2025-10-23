@@ -11,24 +11,22 @@ from torch.nn.utils import clip_grad_norm_
 import torch.nn.functional as F
 from torchvision.utils import save_image
 
-from slot.dataset.dataloader import get_libero_image_dataloader, get_libero_subgoal_image_dataloader
 from slot.utils.common import set_seed
 from slot.utils.neural_networks import get_scheduler
 from slot.utils.pytorch_uilts import optimizer_to, get_learnable_params
 from slot.utils.logging import JsonLogger
 from slot.utils.checkpoint import TopKCheckpointManager, save_checkpoint, load_checkpoint
+from slot.utils.normalization import to01
+from slot.utils.visualization import overlay_heatmap_on_image
 
-from memory_profiler import profile
 
 @hydra.main(version_base=None, config_path='./slot/config', config_name='stage1.yaml')
-@profile
 def main(cfg: OmegaConf):
     OmegaConf.resolve(cfg)
     
     seed = cfg.training.seed
     set_seed(seed)
     
-    stage = int(cfg.stage)
     device = torch.device(cfg.training.device)
     output_dir = str(cfg.logging.output_dir)
     os.makedirs(output_dir, exist_ok=True)
@@ -36,10 +34,7 @@ def main(cfg: OmegaConf):
     os.makedirs(vis_dir, exist_ok=True)
     log_path = os.path.join(output_dir, 'logs.json')
     
-    if stage == 1:
-        train_dataloader, val_dataloader = get_libero_image_dataloader(**cfg.dataset)
-    elif stage == 2:
-        train_dataloader, val_dataloader = get_libero_subgoal_image_dataloader(**cfg.dataset)
+    train_dataloader, val_dataloader = hydra.utils.instantiate(cfg.dataset)
     
     policy = hydra.utils.instantiate(cfg.model)
     learnable_params = list(get_learnable_params(policy))
@@ -95,6 +90,7 @@ def main(cfg: OmegaConf):
     global_step = 0
     
     start_time = datetime.now()
+    print(f"Output will be saved at {output_dir}")
     print(f"Start training for {cfg.training.num_epochs} epochs at {start_time:%Y-%m-%d %H:%M:%S}")
     for epoch in range(int(cfg.training.num_epochs)):
         train_pbar = tqdm.tqdm(train_dataloader, desc=f'Training', leave=False, mininterval=cfg.training.tqdm_interval_sec)
@@ -185,14 +181,15 @@ def main(cfg: OmegaConf):
                 total_val_loss, total_val_recon, total_val_cont = list(), list(), list()
                 val_pbar = tqdm.tqdm(val_dataloader, desc=f'Validation', leave=False, mininterval=cfg.training.tqdm_interval_sec)
                 for batch_idx, batch in enumerate(val_pbar):
-                    imgs = batch['current_image'].to(device)
+                    imgs = batch['current_image'].float().to(device)
                     instructions = batch['instruction']
+                    B, C, H, W = imgs.shape
                     
                     output = policy(imgs, instructions)
 
                     # Feature reconstruction loss
                     gt_feature = output['visual_tokens']
-                    B, P, _ = gt_feature.shape
+                    _, P, _ = gt_feature.shape
                     patch = int(math.sqrt(P))
                     assert patch*patch == P
                     gt_feature = gt_feature.view(B, patch, patch, -1)
@@ -200,13 +197,7 @@ def main(cfg: OmegaConf):
                     reconstructed_feature = output['reconstruction']
                     reconstructed_feature = F.normalize(reconstructed_feature, dim=-1)
                     loss_recon = F.mse_loss(gt_feature, reconstructed_feature)
-                    
-                    cos_map = F.cosine_similarity(reconstructed_feature, gt_feature).clamp(-1, 1)
-                    cos_img = (cos_map.clamp(-1, 1)*0.5 + 0.5)
-                    cos_img = cos_img.unsqueeze(1).cpu()
-                    
-                    save_image(cos_img[:8, ...], os.path.join(vis_dir, f'heatmap_epoch={epoch:03d}_batch={batch_idx:03d}.png'), nrow=4)
-                    
+
                     # Contrastive loss
                     attn = output['attn'].float()                            # (B, num_slots, num_patches)
                     image_tokens = output['mapped_visual_tokens'].float()    # (B, num_patches, feature_dim)
@@ -230,6 +221,28 @@ def main(cfg: OmegaConf):
                     total_val_loss.append(loss_total.item())
                     total_val_recon.append(loss_recon.item())
                     total_val_cont.append(loss_contrastive.item())
+                    
+                    # visualization for debugging
+                    if batch_idx < 4:
+                        cos_map = F.cosine_similarity(reconstructed_feature, gt_feature, dim=-1)        # (B, patch, patch)
+                        cos_img = (cos_map.clamp(-1, 1)*0.5 + 0.5).unsqueeze(1)
+                        cos_up = F.interpolate(cos_img, size=(H, W), mode='bilinear', align_corners=True)
+                        save_image(cos_up[:8].cpu(), os.path.join(vis_dir, f'val_epoch{epoch:02d}_batch={batch_idx:02d}_heatmap.png'), nrow=4)
+                        
+                        sim = torch.einsum('sd,td->st', slot_embedding[0], text_features[0].unsqueeze(0)).squeeze(-1)
+                        topv, topi = torch.topk(sim, k=min(6, sim.numel()))
+                        step_log.update({
+                            f'validation/top_sim_slot_{i}': v.item() for i, v in zip(topi.tolist(), topv.tolist())
+                        })
+                        
+                    attn = output['attn']       # (B, n_slots, num_patches)
+                    _, S, _ = attn.shape
+                    attn = attn.view(B, S, patch, patch)
+                    heat_up = F.interpolate(attn, size=(H, W), mode='bilinear', align_corners=True)
+                    x_gt = to01(imgs)
+                    for i in range(4):
+                        ov = overlay_heatmap_on_image(x_gt[i].cpu(), heat_up[i].cpu(), alpha=0.35)
+                        save_image(ov, os.path.join(vis_dir, f"val_epoch{epoch:02d}_index{i:02d}_slot_attention_overlay.png"), nrow=4)
                     
                     if cfg.training.max_val_steps is not None and batch_idx >= cfg.training.max_val_steps-1:
                         break

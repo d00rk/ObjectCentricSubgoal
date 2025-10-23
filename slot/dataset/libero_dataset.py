@@ -89,6 +89,7 @@ class LiberoImageDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         file_path, demo_key, t, instruction = self.index[idx]
         file = h5py.File(file_path, 'r')
+        
         img = self._read_image(file, demo_key, t)               # (H, W, C)
         img = Image.fromarray(img)
         img = ImageOps.flip(img)
@@ -119,7 +120,6 @@ class LiberoSubgoalImageDataset(Dataset):
     def __init__(self,
                  dataset_path: str,
                  view: str='agentview_rgb',
-                 resize: Tuple[int, int]=(128, 128),
                  val_ratio: float=0.05,
                  seed: int=42,
                  ):
@@ -131,7 +131,6 @@ class LiberoSubgoalImageDataset(Dataset):
         
         self.dataset_path = dataset_path
         self.view = view
-        self.resize = resize
         self.val_ratio = val_ratio
         
         self._preload_data()

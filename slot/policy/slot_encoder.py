@@ -1,22 +1,17 @@
-from typing import Optional, Tuple, Dict
-from dataclasses import dataclass
+from typing import Dict
 import math
 import clip
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from slot.utils.neural_networks import build_grid_of_positions, build_transformer_encoder
-from slot.model.decoder import MLPDecoder
-from slot.model.slot_attention import SlotAttention, ControllableSlotAttentionGrouping
-
 
 class SlotEncoder(nn.Module):
     """
     Slot Encoder Model.
-    - Visual: R3M/VIP/LIV encoder (frozen) -> Mapping g -> CLIP image space
+    - Visual: R3M/VIP/LIV encoder (frozen) -> Mapping g -> query image space
     - Text: CLIP text encoder (frozen)
     - Slot Attention: insturction-conditioned object slots
-    - Decoder: CLIP feature reconstruction from slots
+    - Decoder: query feature reconstruction from slots
     """
     def __init__(
         self,
@@ -36,7 +31,24 @@ class SlotEncoder(nn.Module):
         self.logit_scale = nn.Parameter(torch.tensor(math.log(1/0.07), dtype=torch.float32))
     
     def forward(self, images: torch.Tensor, instructions: str) -> Dict[str, torch.Tensor]:
-        B, C, H, W = images.shape
+        encoder_out = self.encode(images, instructions)
+        slots = encoder_out['slots']
+        recon = self.decode(slots)
+        pred = recon['reconstruction']
+        
+        return {
+            'slots': slots,
+            'attn': encoder_out['attn'],
+            'reconstruction': pred,
+            'masks': recon['masks'],
+            'masks_as_image': recon['masks_as_image'],
+            'per_slot_patches': recon['per_slot_patches'],      # (B, num_slots, num_patches, feature_dim_original)
+            'visual_tokens': encoder_out['visual_tokens'],
+            'mapped_visual_tokens': encoder_out['mapped_visual_tokens'],
+            'text_features': encoder_out['text_features'],
+        }
+    
+    def encode(self, images: torch.Tensor, instructions: str):
         device = images.device
         dtype = images.dtype
         if dtype == torch.uint8:
@@ -57,21 +69,28 @@ class SlotEncoder(nn.Module):
         slots, attn, attn_list = self.slot_attention(
             inputs=mapped_visual_tokens_n,
             text_embeddings=text_features.unsqueeze(1)
-        )                                                                       # slots: (B, n_slots, slot_dim), attn: (B, n_slots, n_patches)
+        )
+        
+        return {
+            'slots': slots,
+            'attn': attn,
+            'visual_tokens': visual_tokens,
+            'mapped_visual_tokens': mapped_visual_tokens,
+            'text_features': text_features,
+        }
+    
+    def decode(self, slots: torch.Tensor) -> Dict[str, torch.Tensor]:
+        B = slots.shape[0]
+        
         recon = self.decoder(slots)
         pred = recon['reconstruction']      # reconstruction: (B, num_patches, feature_dim_original), masks: (B, n_slots, num_patches)
         num_patches = pred.shape[1]
         patch = int(math.sqrt(num_patches))
         pred = pred.view(B, patch, patch, -1)       # (B, num_patches**1/2, num_patches**1/2, feature_dim_original)
-
+        
         return {
-            'slots': slots,
-            'attn': attn,
             'reconstruction': pred,
             'masks': recon['masks'],
             'masks_as_image': recon['masks_as_image'],
             'per_slot_patches': recon['per_slot_patches'],      # (B, num_slots, num_patches, feature_dim_original)
-            'visual_tokens': visual_tokens,
-            'mapped_visual_tokens': mapped_visual_tokens,
-            'text_features': text_features,
         }

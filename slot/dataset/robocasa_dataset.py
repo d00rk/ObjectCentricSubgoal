@@ -48,11 +48,11 @@ class RobocasaImageDataset(Dataset):
         for file in tqdm.tqdm(dataset_files, desc=f'Preloading dataset', leave=False):
             f = h5py.File(file, 'r')
             data = f['data']
-            problem_info = json.loads(data.attrs['problem_info'])
-            instruction = problem_info['language_instruction']
             demo_keys = list(data.keys())
             for key in demo_keys:
                 demo = data[key]
+                ep_meta = json.loads(demo.attrs['ep_meta'])
+                instruction = ep_meta['lang']
                 image_obs = demo['obs'][self.view][()]
                 T = image_obs.shape[0]
                 for t in range(0, T):
@@ -108,7 +108,7 @@ class RobocasaImageDataset(Dataset):
 
 class LiberoSubgoalImageDataset(Dataset):
     """
-    Single-view frame dataset for Libero demos.
+    Single-view frame dataset for Robocasa demos.
     
     Return: {current_image, subgoal_image, file, demo, current_step, subgoal_step, instruction}
     - current image: image of step t, float tensor in [0, 1]. shape: (C, H, W)
@@ -116,7 +116,7 @@ class LiberoSubgoalImageDataset(Dataset):
     """
     def __init__(self,
                  dataset_path: str,
-                 view: str='agentview_rgb',
+                 view: str='robot0_agentview_left_image',
                  resize: Tuple[int, int]=(128, 128),
                  val_ratio: float=0.05,
                  seed: int=42,
@@ -125,7 +125,7 @@ class LiberoSubgoalImageDataset(Dataset):
         set_seed(seed)
         
         if dataset_path is None:
-            dataset_path = get_libero_path('dataset')
+            raise ValueError("Please provide 'dataset_path'.")
         
         self.dataset_path = dataset_path
         self.view = view
@@ -144,11 +144,11 @@ class LiberoSubgoalImageDataset(Dataset):
             try:
                 with h5py.File(file, 'r') as f:
                     data = f['data']
-                    problem_info = json.loads(data.attrs['problem_info'])
-                    instruction = problem_info['language_instruction']
                     demo_keys = list(data.keys())
                     for key in demo_keys:
                         demo = data[key]
+                        ep_meta = json.loads(demo.attrs['ep_meta'])
+                        instruction = ep_meta['lang']
                         subgoal_indices = demo['uvd_subgoal_indices'][()]
                         image_obs = demo['obs'][self.view][()]
                         T = image_obs.shape[0]

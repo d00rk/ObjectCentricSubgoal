@@ -1,6 +1,7 @@
-from typing import Optional, List, Callable, Union
+from typing import Dict, Optional, List, Callable, Union
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR, SequentialLR, LinearLR
 from diffusers.optimization import Union, SchedulerType, Optional, TYPE_TO_SCHEDULER_FUNCTION
 
@@ -155,6 +156,7 @@ def build_mlp(
     final_activation_fn: Optional[Union[str, Callable]] = None,
     initial_layer_norm: bool = False,
     residual: bool = False,
+    dropout: Optional[float]=None,
 ) -> nn.Sequential:
     layers = []
     current_dim = input_dim
@@ -169,12 +171,147 @@ def build_mlp(
             current_dim = n_features // 2
         else:
             current_dim = n_features
+        if dropout is not None:
+            layers.append(nn.Dropout(dropout))
 
     layers.append(nn.Linear(current_dim, output_dim))
     nn.init.zeros_(layers[-1].bias)
+    if dropout is not None:
+        layers.append(nn.Dropout(dropout))
     if final_activation_fn is not None:
         layers.append(get_activation_fn(final_activation_fn))
 
     if residual:
         return Residual(nn.Sequential(*layers))
     return nn.Sequential(*layers)
+
+
+def masked_huber(pred: torch.Tensor, target: torch.Tensor, mask: Optional[torch.Tensor], delta: float=1.0) -> torch.Tensor:
+    diff = pred - target
+    abs_diff = diff.abs()
+    quad = torch.clamp(abs_diff, max=delta)
+    lin = abs_diff - quad
+    loss = 0.5 * quad * quad + delta * lin
+    if mask is not None:
+        if mask.dtype != torch.bool:
+            mask = (mask != 0)
+        mask = mask.unsqueeze(-1).to(loss.dtype)
+        loss = loss * mask
+        denom = mask.sum()
+        if denom.item() == 0:
+            return loss.sum() * 0.0
+        return loss.sum() / denom
+    return loss.mean()
+
+
+@torch.no_grad()
+def cosine_sim(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    a = F.normalize(a, p=2, dim=-1)
+    b = F.normalize(b, p=2, dim=-1)
+    sim = torch.einsum('bsd,bkd->bsk', a, b)
+    return sim
+
+
+@torch.no_grad()
+def greedy_match(sim: torch.Tensor, target_valid_mask: Optional[torch.Tensor]) -> torch.Tensor:
+    B, S, K = sim.shape
+    if target_valid_mask is None:
+        target_valid_mask = torch.ones(B, K, dtype=torch.bool, device=sim.device)
+    else:
+        target_valid_mask = target_valid_mask.to(sim.device)
+        if target_valid_mask.dtype != torch.bool:
+            target_valid_mask = (target_valid_mask != 0)
+    
+    matched_idx = torch.full((B, S), -1, dtype=torch.long, device=sim.device)
+    matched_sim = torch.full((B, S), float("-inf"), dtype=sim.dtype, device=sim.device)
+    available = target_valid_mask.clone()
+    
+    for s in range(S):
+        cur = sim[:, s, :].clone()
+        cur[~available] = float("-inf")
+        best_k = cur.argmax(dim=-1)
+        best_v = cur.gather(1, best_k.unsqueeze(1)).squeeze(1)
+        can = torch.isfinite(best_v)
+        matched_idx[can, s] = best_k[can]
+        matched_sim[can, s] = best_v[can]
+        if can.any():
+            b_idx = torch.nonzero(can, as_tuple=False).squeeze(1)
+            k_sel = best_k[can]
+            available[b_idx, k_sel] = False
+    return matched_idx, matched_sim
+
+
+@torch.no_grad()
+def mutual_nearest(sim: torch.Tensor, matched_idx: torch.Tensor, slot_valid: torch.Tensor, target_valid: torch.Tensor) -> torch.Tensor:
+    B, S, K = sim.shape
+    keep = torch.zeros(B, S, dtype=torch.bool, device=sim.device)
+    sim_slots = sim.clone()
+    sim_slots[~slot_valid.unsqueeze(-1).expand_as(sim_slots)] = float("-inf")
+    best_slot_for_target = sim_slots.argmax(dim=1)
+    for s in range(S):
+        k = matched_idx[:, s]
+        valid_row = slot_valid[:, s] & (k >= 0)
+        if valid_row.any():
+            b_idx = torch.nonzero(valid_row, as_tuple=False).squeeze(-1)
+            k_sel = k[valid_row]
+            target_ok = target_valid[b_idx, k_sel]
+            slot_ok = (best_slot_for_target[b_idx, k_sel] == s)
+            keep[b_idx] = keep[b_idx] | (target_ok & slot_ok)
+    return keep
+
+
+@torch.no_grad()
+def align_targets(
+    basis_slots: torch.Tensor,      # (B, S, D)
+    target_slots: torch.Tensor,     # (B, K, D)
+    target_exists: Optional[torch.Tensor],  # (B, K) in [0, 1] or bool.
+    sim_threshold: float=0.35,
+) -> Dict[str, torch.Tensor]:
+    """
+    Align basis_slots & target_slots by 1:1 greedy, generate masks.
+    
+    Returns:
+        target_slots_aligned (B, S, D)
+        target_mask: (B, S) in [0, 1] (float).
+        matched_idx: (B, S) long
+        matched_sim: (B, S) float
+        sim_matrix: (B, S, K)
+    """
+    device = basis_slots.device
+    B, S, D = basis_slots.shape
+    _, K, _ = target_slots.shape
+    
+    sim = cosine_sim(basis_slots, target_slots)         # (B, S, K)
+    m_idx, m_sim = greedy_match(sim, target_exists)     # (B, S), (B, S)
+    
+    keep = (m_idx >= 0) & (m_sim >= sim_threshold)      # (B, S)
+    
+    aligned = torch.zeros_like(basis_slots)
+    gather_idx = m_idx.clamp_min(0).unsqueeze(-1).expand(B, S, D)   # (B, S, D)
+    for b in range(B):
+        aligned[b] = target_slots[b].gather(0, gather_idx[b])
+    target_mask = keep.to(basis_slots.dtype)
+    
+    return {
+        "target_slots_aligned": aligned,
+        "target_mask": target_mask,
+        "matched_idx": m_idx,
+        "matched_sim": m_sim,
+        "sim_matrix": sim,
+    }
+
+
+def psnr(x: torch.Tensor, y: torch.Tensor, eps: float=1e-8) -> torch.Tensor:
+    if x.dim() == 3:
+        x = x.unsqueeze(0)
+    if y.dim() == 3:
+        y = y.unsqueeze(0)
+    
+    x = x.float()
+    y = y.float()
+    
+    mse = F.mse_loss(x, y, reduction='none')
+    mse = mse.flatten(1).mean(dim=1)
+    
+    psnr = 10.0 * torch.log10(torch.tensor(1.0, device=x.device) / (mse+eps))
+    return psnr

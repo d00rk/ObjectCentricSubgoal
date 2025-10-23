@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 import os
 import pathlib
 import torch
@@ -29,7 +29,8 @@ def load_checkpoint(path, model, optimizer, lr_scheduler, map_location='cpu'):
     if lr_scheduler is not None and 'lr_scheduler' in ckpt:
         lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
     return ckpt.get('cfg', None)
-    
+
+
 class TopKCheckpointManager:
     def __init__(self,
             save_dir,

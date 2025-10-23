@@ -203,39 +203,40 @@ class CLIPTextModel(nn.Module):
     
     
     
-if __name__=='__main__':
-    from PIL import Image
-    import numpy as np
-    device = torch.device('cuda:0')
-    extractor = CLIPImageFeatureExtractor(model_type='ViT-B/32')     # 대략 1380MiB 정도
-    extractor = extractor.to(device)
-    dtype = extractor.dtype
-    print(extractor.out_dim)
-    image = 'libero_test.png'
-    image = Image.open(image).convert('RGB')
-    image_features, fmap, tokens = extractor(image, return_tokens=True, return_spatial=True)
-    print('feature:', image_features.shape)
-    print('tokens: ', tokens.shape)
-    # print('fmap: ', fmap.shape)
-    image_features /= image_features.norm(dim=-1, keepdim=True)
+# if __name__=='__main__':
+#     # from PIL import Image
+#     # import numpy as np
+#     device = torch.device('cuda:0')
+#     # extractor = CLIPImageFeatureExtractor(model_type='ViT-B/32')     # 대략 1380MiB 정도
+#     # extractor = extractor.to(device)
+#     # dtype = extractor.dtype
+#     # print(extractor.out_dim)
+#     # image = 'libero_test.png'
+#     # image = Image.open(image).convert('RGB')
+#     # image_features, fmap, tokens = extractor(image, return_tokens=True, return_spatial=True)
+#     # print('feature:', image_features.shape)
+#     # print('tokens: ', tokens.shape)
+#     # # print('fmap: ', fmap.shape)
+#     # image_features /= image_features.norm(dim=-1, keepdim=True)
     
-    img = 'libero_test_1.png'
-    img = Image.open(img).convert('RGB')
-    img = extractor.preprocess(img).unsqueeze(0).to(device=device, dtype=dtype)
-    img_features = extractor(img)
-    img_features /= img_features.norm(dim=-1, keepdim=True)
+#     # img = 'libero_test_1.png'
+#     # img = Image.open(img).convert('RGB')
+#     # img = extractor.preprocess(img).unsqueeze(0).to(device=device, dtype=dtype)
+#     # img_features = extractor(img)
+#     # img_features /= img_features.norm(dim=-1, keepdim=True)
     
-    text = 'a photo of cat.'
-    text = clip.tokenize(text)
-    text = text.to(device)
-    text_encoder = CLIPTextModel(model_type='ViT-B/32')
-    text_encoder = text_encoder.to(device)
-    text_feature = text_encoder(text)
-    print(text_feature.shape)
-    text_feature /= text_feature.norm(dim=-1, keepdim=True)
+#     text = 'cat and dogs are playing on the ground.'
+#     text = clip.tokenize(text)
+#     print('tokens: ', text.shape)
+#     text = text.to(device)
+#     text_encoder = CLIPTextModel(model_type='ViT-B/32')
+#     text_encoder = text_encoder.to(device)
+#     text_feature = text_encoder(text)
+#     print('text embeddings: ', text_feature.shape)
+#     text_feature /= text_feature.norm(dim=-1, keepdim=True)
     
-    similarity0 = (100.0 * image_features @ text_feature.T).item()
-    print(similarity0)
+#     # similarity0 = (100.0 * image_features @ text_feature.T).item()
+#     # print(similarity0)
     
-    similarity1 = (100.0 * img_features @ text_feature.T).item()
-    print(similarity1)
+#     # similarity1 = (100.0 * img_features @ text_feature.T).item()
+#     # print(similarity1)

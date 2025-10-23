@@ -1,0 +1,7 @@
+_target_: slot.model.decoder.SlotAttentionDecoder
+decoder: 
+  _target_: slot.model.decoder.get_slotattention_decoder_backbone
+  object_dim: ${globals.slot_dim}
+  output_dim: 4
+final_activation: gelu
+positional_embedding: null
